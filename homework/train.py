@@ -13,10 +13,12 @@ from .utils import load_data
 def train(
     exp_dir: str = "logs",
     model_name: str = "linear",
-    num_epoch: int = 50,
+    num_epoch: int = 120,
     lr: float = 1e-3,
     batch_size: int = 128,
     seed: int = 2024,
+    optimizer: str = "sgd",
+    num_layers: int = 3,
     **kwargs,
 ):
     if torch.cuda.is_available():
@@ -45,7 +47,10 @@ def train(
 
     # create loss function and optimizer
     loss_func = ClassificationLoss()
-    # optimizer = ...
+    if optimizer == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9,weight_decay=1e-3)
+    elif optimizer == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr,weight_decay=1e-3)
 
     global_step = 0
     metrics = {"train_acc": [], "val_acc": []}
@@ -62,7 +67,13 @@ def train(
             img, label = img.to(device), label.to(device)
 
             # TODO: implement training step
-            raise NotImplementedError("Training step not implemented")
+            pred = model(img)
+            loss = loss_func(pred, label)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            #raise NotImplementedError("Training step not implemented")
+            metrics["train_acc"].append((pred.argmax(dim=1) == label).float().mean())
 
             global_step += 1
 
@@ -73,14 +84,23 @@ def train(
             for img, label in val_data:
                 img, label = img.to(device), label.to(device)
 
+                validation_pred = model(img)
+                val_loss = loss_func(validation_pred, label)
+                val_acc = (validation_pred.argmax(dim=1) == label).float().mean()
+                metrics["val_acc"].append(val_acc)
+
                 # TODO: compute validation accuracy
-                raise NotImplementedError("Validation accuracy not implemented")
+                #raise NotImplementedError("Validation accuracy not implemented")
 
         # log average train and val accuracy to tensorboard
         epoch_train_acc = torch.as_tensor(metrics["train_acc"]).mean()
         epoch_val_acc = torch.as_tensor(metrics["val_acc"]).mean()
+        logger.add_scalar("train_accuracy", epoch_train_acc, global_step=global_step)
+        logger.add_scalar("val_accuracy", epoch_val_acc, global_step=global_step)
+        #logger.add_scalar("train_loss", loss.item(), global_step=global_step)
+        #logger.add_scalar("val_loss", val_loss.item(), global_step=global_step)
 
-        raise NotImplementedError("Logging not implemented")
+        #raise NotImplementedError("Logging not implemented")
 
         # print on first, last, every 10th epoch
         if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
@@ -103,12 +123,13 @@ if __name__ == "__main__":
 
     parser.add_argument("--exp_dir", type=str, default="logs")
     parser.add_argument("--model_name", type=str, required=True)
-    parser.add_argument("--num_epoch", type=int, default=50)
+    parser.add_argument("--num_epoch", type=int, default=120)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--seed", type=int, default=2024)
-
+    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--optimizer", type=str, default="sgd")
+    parser.add_argument("--batch_size", type=int, default=128)
     # optional: additional model hyperparamters
-    # parser.add_argument("--num_layers", type=int, default=3)
+    parser.add_argument("--num_layers", type=int, default=3)
 
     # pass all arguments to train
     train(**vars(parser.parse_args()))
