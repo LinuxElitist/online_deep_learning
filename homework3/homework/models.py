@@ -15,6 +15,14 @@ class ClassificationLoss(nn.Module):
     def forward(self, logits, target):
         return self.loss(logits, target)
 
+class DetectorL2Loss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss = nn.MSELoss()
+
+    def forward(self, pred, target):
+        return self.loss(pred, target)
+
 class Classifier(nn.Module):
     def __init__(
         self,
@@ -93,6 +101,40 @@ class Classifier(nn.Module):
         return self(x).argmax(dim=1)
 
 
+class DownConvolution(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.block(x)
+
+
+class UpConvolution(nn.Module):
+    def __init__(self, in_channels: int, skip_channels: int, out_channels: int):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(
+            in_channels, out_channels, kernel_size=2, stride=2, bias=False
+        )
+        self.refine = nn.Sequential(
+            nn.Conv2d(out_channels + skip_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
+        x = self.up(x)
+        x = torch.cat([x, skip], dim=1)
+        return self.refine(x)
+
 class Detector(torch.nn.Module):
     def __init__(
         self,
@@ -111,7 +153,24 @@ class Detector(torch.nn.Module):
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN))
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD))
 
-        # TODO: implement
+        self.head = nn.Sequential(
+            nn.Conv2d(in_channels, 16, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.ReLU(inplace=True),
+        )
+
+        self.downconv = DownConvolution(16, 32)
+        self.downconv_2 = DownConvolution(32, 64)
+        self.downconv_3 = DownConvolution(64, 128)   
+
+        self.upconv1 = UpConvolution(in_channels=128, skip_channels=64, out_channels=64)  # -> (B, 64, 24, 32)
+        self.upconv2 = UpConvolution(in_channels=64,  skip_channels=32, out_channels=32)  # -> (B, 32, 48, 64)
+        self.upconv3 = UpConvolution(in_channels=32,  skip_channels=16, out_channels=16)  # -> (B, 16, 96, 128)
+
+        # Task-Specific Prediction Heads
+        self.segmentation_head = nn.Conv2d(16, num_classes, kernel_size=1)
+        self.depth_head = nn.Conv2d(16, 1, kernel_size=1)
+
         pass
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -131,11 +190,21 @@ class Detector(torch.nn.Module):
         z = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
         # TODO: replace with actual forward pass
-        logits = torch.randn(x.size(0), 3, x.size(2), x.size(3))
-        raw_depth = torch.rand(x.size(0), x.size(2), x.size(3))
+        s0 = self.head(z)
+        d1 = self.downconv(s0)
+        d2 = self.downconv_2(d1)
+        d3 = self.downconv_3(d2)
+        
+        u1 = self.upconv1(d3, d2)      # (B, 64, 24, 32)
+        u2 = self.upconv2(u1, d1)      # (B, 32, 48, 64)
+        u3 = self.upconv3(u2, s0)      # (B, 16, 96, 128)
+        
+        logits = self.segmentation_head(u3)
+        #raw_depth = self.depth_head(u2)
+        raw_depth = torch.sigmoid(self.depth_head(u3)).squeeze(1)  # (B, 96, 128)
 
         return logits, raw_depth
-
+    
     def predict(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Used for inference, takes an image and returns class labels and normalized depth.

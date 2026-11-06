@@ -155,7 +155,7 @@ class RandomHorizontalFlip(tv_transforms.RandomHorizontalFlip):
         if np.random.rand() < self.p:
             sample["image"] = np.flip(sample["image"], axis=2)
             sample["track"] = np.flip(sample["track"], axis=1)
-
+            
         return sample
 
 

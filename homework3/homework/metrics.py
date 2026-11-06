@@ -115,24 +115,39 @@ class ConfusionMatrix:
         self.matrix = torch.zeros(num_classes, num_classes)
         self.class_range = torch.arange(num_classes)
 
+    # @torch.no_grad()
+    # def add(self, preds: torch.Tensor, labels: torch.Tensor):
+    #     """
+    #     Updates using predictions and ground truth labels
+
+    #     Args:
+    #         preds (torch.LongTensor): (b,) or (b, h, w) tensor with class predictions
+    #         labels (torch.LongTensor): (b,) or (b, h, w) tensor with ground truth class labels
+    #     """
+    #     if preds.dim() > 1:
+    #         preds = preds.view(-1)
+    #         labels = labels.view(-1)
+
+    #     preds_one_hot = (preds.type_as(labels).cpu()[:, None] == self.class_range[None]).int()
+    #     labels_one_hot = (labels.cpu()[:, None] == self.class_range[None]).int()
+    #     update = labels_one_hot.T @ preds_one_hot
+
+    #     self.matrix += update
+
     @torch.no_grad()
     def add(self, preds: torch.Tensor, labels: torch.Tensor):
-        """
-        Updates using predictions and ground truth labels
-
-        Args:
-            preds (torch.LongTensor): (b,) or (b, h, w) tensor with class predictions
-            labels (torch.LongTensor): (b,) or (b, h, w) tensor with ground truth class labels
-        """
         if preds.dim() > 1:
             preds = preds.view(-1)
             labels = labels.view(-1)
 
-        preds_one_hot = (preds.type_as(labels).cpu()[:, None] == self.class_range[None]).int()
-        labels_one_hot = (labels.cpu()[:, None] == self.class_range[None]).int()
-        update = labels_one_hot.T @ preds_one_hot
+        device = preds.device
+        if self.matrix.device != device:
+            self.matrix = self.matrix.to(device)
+            self.class_range = self.class_range.to(device)
 
-        self.matrix += update
+        preds_one_hot = (preds.type_as(labels)[:, None] == self.class_range[None]).float()
+        labels_one_hot = (labels[:, None] == self.class_range[None]).float()
+        self.matrix += labels_one_hot.T @ preds_one_hot
 
     def reset(self):
         """

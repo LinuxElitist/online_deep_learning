@@ -39,7 +39,15 @@ class RoadDataset(Dataset):
                 ]
             )
         elif transform_pipeline == "aug":
-            pass
+                        # construct your custom augmentation
+            xform = road_transforms.Compose(
+                [
+                    road_transforms.ImageLoader(self.episode_path),
+                    road_transforms.DepthLoader(self.episode_path),
+                    road_transforms.TrackProcessor(self.track),
+                    road_transforms.RandomHorizontalFlip(p=0.5),
+                ]
+            )
 
         if xform is None:
             raise ValueError(f"Invalid transform {transform_pipeline} specified!")
